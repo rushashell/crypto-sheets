@@ -9,6 +9,7 @@ function onOpen() {
       .addItem('Fetch API data', 'cryptoFetchData')
       .addSeparator()
       .addItem('Configure exchange', 'showSelectExchange')
+      .addItem('Configure CryptoCompare API key', 'showSetApiKey')
       .addSeparator()
       .addItem('How to auto-refresh rates', 'ShowRefreshInfo')
       .addToUi();
@@ -47,13 +48,42 @@ function showSelectExchange() {
       userProperties.setProperty("CRYPTO_EXCHANGE", user_input);
       ui.alert(
         'Exchange successfully saved',
-        'If it does not work riht away, please try to refresh manually.',
+        'If it does not work right away, please try to refresh manually.',
         ui.ButtonSet.OK
       );
     }
   }
 }
 
+/**
+ * @OnlyCurrentDoc
+ */
+function showSetApiKey() {
+  var ui = SpreadsheetApp.getUi();
+  var userProperties = PropertiesService.getUserProperties();
+  var currentKey = userProperties.getProperty("CRYPTO_CRYPTOCOMPARE_API");
+
+  var keyText = currentKey != null ? "It is currently set" : "No current key set.";
+
+  var result = ui.prompt(
+    'CryptoCompare API',
+    `Define the CryptoCompare API key.\n${keyText}`,
+    ui.ButtonSet.OK_CANCEL
+  );
+  
+  var button = result.getSelectedButton();
+  var user_input = result.getResponseText().replace(/\s+/g, '');
+  if (button == ui.Button.OK) {
+    if (user_input) {
+      userProperties.setProperty("CRYPTO_CRYPTOCOMPARE_API", user_input);
+      ui.alert(
+        'CryptoCompare API key successfully saved',
+        'If it does not work right away, please check the log.',
+        ui.ButtonSet.OK
+      );
+    }
+  }
+}
 
 /*
   refresh()
@@ -62,7 +92,7 @@ function showSelectExchange() {
     https://tanaikech.github.io/2019/10/28/automatic-recalculation-of-custom-function-on-spreadsheet-part-2/
 */
 function cryptoRefresh() {
-  const customFunctions = ["CRYPTO_PRICE"]; // Please set the function names here.
+  const customFunctions = ["CRYPTO_PRICE", "CRYPTO_PRICE_HISTORICAL"]; // Please set the function names here.
 
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var temp = Utilities.getUuid();
@@ -82,6 +112,8 @@ function cryptoDeleteData() {
   var scriptProperties = PropertiesService.getScriptProperties();
   scriptProperties.deleteProperty('COIN_DATA');
   scriptProperties.deleteProperty('CRYPTO_COIN_DATA');
+  scriptProperties.deleteProperty('CRYPTO_CRYPTOCOMPARE_API');
+  scriptProperties.deleteProperty('CRYPTO_CRYPTOCOMPARE_CACHE');
 }
 
 /*
@@ -110,6 +142,118 @@ function cryptoFetchData() {
   scriptProperties.setProperty('CRYPTO_COIN_DATA', JSON.stringify(data));
 }
 
+function cryptoGetCachedHistoricalPrice(input, currency, date)
+{
+  var scriptProperties = PropertiesService.getScriptProperties();
+  const cachedDataJson = scriptProperties.getProperty('CRYPTO_CRYPTOCOMPARE_CACHE');
+  var cachedData = JSON.parse(cachedDataJson) || {};
+  if (!cachedData) return null;
+
+  var dateObject = new Date(date);
+  var timestamp = dateObject.getTime() / 1000;
+  var cachedInput = cachedData[input];
+  var cachedCurrency = cachedInput != null ? cachedInput[currency] : null;
+  var cachedPrice = cachedCurrency != null ? cachedCurrency[timestamp] : null;
+  if (cachedPrice != null)
+  {
+     // Found in cache. Return
+     console.log(`Found price for ${input}, timestamp ${date} in cache.`);
+     return cachedPrice;
+  }
+
+  console.log(`Price was not found in cache: ${cachedInput}, ${cachedCurrency}. ${cachedPrice}.`);
+  return null;
+}
+
+function cryptoUpdateCachedHistoricalPrice(input, currency, date, price)
+{
+  var scriptProperties = PropertiesService.getScriptProperties();
+  const cachedDataJson = scriptProperties.getProperty('CRYPTO_CRYPTOCOMPARE_CACHE');
+  var cachedData = JSON.parse(cachedDataJson) || {};
+  if (!cachedData) return null;
+
+  var dateObject = new Date(date);
+  var timestamp = dateObject.getTime() / 1000;
+  var cachedInput = cachedData[input];
+  var cachedCurrency = cachedInput ? cachedInput[currency] : null;
+
+  if (!cachedInput) cachedData[input] = {};
+  if (!cachedCurrency) cachedData[input][currency] = {};
+  cachedData[input][currency][timestamp] = price;
+  
+  console.log(`Writing cache: ${input}, ${currency}, ${timestamp}...`)
+  // I'm not sure if below line is in trouble when function is called async. If so, there should be a lock mechanism (not ideal).
+  scriptProperties.setProperty('CRYPTO_CRYPTOCOMPARE_CACHE', JSON.stringify(cachedData));
+}
+
+function cryptoFetchDataHistorical(input, currency, date)
+{
+  var userProperties = PropertiesService.getUserProperties();
+  const exchange = userProperties.getProperty("CRYPTO2_EXCHANGE") || "CCCAGG";
+  const currentKey = userProperties.getProperty("CRYPTO_CRYPTOCOMPARE_API");
+  
+  if (currentKey == null)
+  {
+    throw new Error("No CryptoCompare API key is set.");
+  }
+
+  var dateObject = new Date(date);
+  var timestamp = dateObject.getTime() / 1000;
+  var url=`https://min-api.cryptocompare.com/data/v2/histoday?fsym=${input}&tsym=${currency}&e=${exchange}&toTs=${timestamp}&limit=1&api_key=${currentKey}`
+  var response = UrlFetchApp.fetch(url); 
+  var jsonData = JSON.parse(response.getContentText());
+  if (jsonData == null)
+  {
+    throw new Error(`Invalid response from API: ${response}`);
+  }
+
+  if (jsonData.Data == null || jsonData.Data.Data == null || jsonData.Data.Data.length == 0)
+  {
+    return "-1";
+  }
+
+  var price = jsonData.Data.Data[1].open;  
+  return price;
+}
+
+/**
+ * Get a ticker price from a Range of tickers historical.
+ * @param {ticker(s)} range.
+ * @param {date} the historical date.
+ * @param {convertCurrency} only USD, EUR, USDT, BTC and ETH are supported for now.
+ * @return The value of the ticker for the given currency at the given date.
+ * @customfunction
+ */
+function CRYPTO_PRICE_HISTORICAL(input = "BTC", date = "2017-01-01", convertCurrency = "USDT")
+{
+  if (input.map) 
+  {
+    return input.map((ticker) => CRYPTO_PRICE_HISTORICAL(ticker, date, convertCurrency));
+  }
+  else 
+  {
+    if (!["USD", "EUR", "USDT", "BTC", "ETH"].includes(convertCurrency)) throw new Error("The currency param must be USD, EUR, USDT, BTC or ETH, Default to USDT.");
+    
+    var dateObject = new Date(date);
+    if (dateObject == null)
+    {
+      throw new Error("Invalid date given.");
+    }
+
+    // check if is cached
+    var price = cryptoGetCachedHistoricalPrice(input, convertCurrency, date);
+    if (price != null)
+    {
+      return price;
+    }
+
+    // Get price from API, save it to cache and return.
+    var fetchedPrice = cryptoFetchDataHistorical(input, convertCurrency, date);
+    cryptoUpdateCachedHistoricalPrice(input, convertCurrency, date, fetchedPrice);
+    return fetchedPrice;
+  }
+}
+
 /**
  * Get a ticker price from a Range of tickers.
  * @param {ticker(s)} range.
@@ -117,8 +261,8 @@ function cryptoFetchData() {
  * @return The value of the ticker for the given currency.
  * @customfunction
  */
-function CRYPTO_PRICE(input = "BTC", currency = "USDT") {
-   
+function CRYPTO_PRICE(input = "BTC", currency = "USDT") 
+{   
   if (input.map) {
     return input.map((ticker) => CRYPTO_PRICE(ticker, currency));
   }
