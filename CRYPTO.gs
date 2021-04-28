@@ -1,24 +1,45 @@
+/**
+ * This is a copy of: https://github.com/rushashell/crypto-sheets/blob/main/CRYPTO.gs
+ * Forked from: https://github.com/kbouchard/crypto-sheets
+ * First version was created by kbouchard. Historical functionality with wallet values added by ELiT3
+ * Requirements: 
+ *   - Live price: nothing (requested on demand from coinstats API)
+ *   - Historical price: FREE Cryptocompare account with API key: https://min-api.cryptocompare.com/
+*/
+const defaultWalletSheetName = "Wallet value";
 
 /**
  * @OnlyCurrentDoc
  */
-function onOpen() {
+function onOpen() 
+{
   var ui = SpreadsheetApp.getUi();
-  ui.createMenu('CRYPTO')
-      .addItem('Refresh prices', 'cryptoRefresh')
-      .addItem('Fetch API data', 'cryptoFetchData')
-      .addSeparator()
-      .addItem('Configure exchange', 'showSelectExchange')
-      .addItem('Configure CryptoCompare API key', 'showSetApiKey')
-      .addSeparator()
-      .addItem('How to auto-refresh rates', 'ShowRefreshInfo')
-      .addToUi();
+
+  var app = SpreadsheetApp.getActiveSpreadsheet();
+  var walletValueSheet = app.getSheetByName(sheetName);
+
+  var newMenu = ui.createMenu('CRYPTO')
+      .addItem('💲 Refresh prices', 'cryptoRefresh')
+      .addItem('🔃 Fetch API data', 'cryptoFetchData');
+
+  if (walletValueSheet)
+  {
+    newMenu.addItem('🗓️ Add wallet date columns', 'addWalletDateColumns')
+  }
+      
+  newMenu.addSeparator()
+    .addItem('🌐 Configure exchange', 'showSelectExchange')
+    .addItem('🔑 Configure CryptoCompare API key', 'showSetApiKey')
+    .addSeparator()
+    .addItem('❓ How to auto-refresh rates', 'ShowRefreshInfo')
+    .addToUi();
 }
 
 /**
  * @OnlyCurrentDoc
  */
-function ShowRefreshInfo() {
+function ShowRefreshInfo() 
+{
   var ui = SpreadsheetApp.getUi()
   ui.alert(
     "How to refresh rates",
@@ -30,7 +51,8 @@ function ShowRefreshInfo() {
 /**
  * @OnlyCurrentDoc
  */
-function showSelectExchange() {
+function showSelectExchange() 
+{
   var ui = SpreadsheetApp.getUi();
   var userProperties = PropertiesService.getUserProperties();
   var userExchange = userProperties.getProperty("CRYPTO_EXCHANGE")
@@ -58,7 +80,8 @@ function showSelectExchange() {
 /**
  * @OnlyCurrentDoc
  */
-function showSetApiKey() {
+function showSetApiKey() 
+{
   var ui = SpreadsheetApp.getUi();
   var userProperties = PropertiesService.getUserProperties();
   var currentKey = userProperties.getProperty("CRYPTO_CRYPTOCOMPARE_API");
@@ -91,7 +114,8 @@ function showSetApiKey() {
     Borrowed form:
     https://tanaikech.github.io/2019/10/28/automatic-recalculation-of-custom-function-on-spreadsheet-part-2/
 */
-function cryptoRefresh() {
+function cryptoRefresh() 
+{
   const customFunctions = ["CRYPTO_PRICE", "CRYPTO_PRICE_HISTORICAL"]; // Please set the function names here.
 
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -108,7 +132,8 @@ function cryptoRefresh() {
   });
 }
 
-function cryptoDeleteData() {
+function cryptoDeleteData() 
+{
   var scriptProperties = PropertiesService.getScriptProperties();
   scriptProperties.deleteProperty('COIN_DATA');
   scriptProperties.deleteProperty('CRYPTO_COIN_DATA');
@@ -120,7 +145,8 @@ function cryptoDeleteData() {
   fetchAPIData()
   TRIGGER
 */
-function cryptoFetchData() {
+function cryptoFetchData() 
+{
   var userProperties = PropertiesService.getUserProperties();
   var exchange = userProperties.getProperty("CRYPTO_EXCHANGE") || "binance";
   var url=`https://api.coinstats.app/public/v1/coins?skip=0&limit=1000&exchange=${exchange}&currency=USDT`;
@@ -233,7 +259,7 @@ function CRYPTO_PRICE_HISTORICAL(input = "BTC", date = "2017-01-01", convertCurr
   else 
   {
     if (!["USD", "EUR", "USDT", "BTC", "ETH"].includes(convertCurrency)) throw new Error("The currency param must be USD, EUR, USDT, BTC or ETH, Default to USDT.");
-    
+
     var dateObject = new Date(date);
     if (dateObject == null)
     {
@@ -263,10 +289,12 @@ function CRYPTO_PRICE_HISTORICAL(input = "BTC", date = "2017-01-01", convertCurr
  */
 function CRYPTO_PRICE(input = "BTC", currency = "USDT") 
 {   
-  if (input.map) {
+  if (input.map) 
+  {
     return input.map((ticker) => CRYPTO_PRICE(ticker, currency));
   }
-  else {
+  else 
+  {
     var scriptProperties = PropertiesService.getScriptProperties();
     const coinDataJSON = scriptProperties.getProperty('CRYPTO_COIN_DATA');
     let coinData = JSON.parse(coinDataJSON);
@@ -283,4 +311,51 @@ function CRYPTO_PRICE(input = "BTC", currency = "USDT")
 
     return price;
   }
+}
+
+function addWalletDateColumns(sheetName = "")
+{
+  if (sheetName == "")
+  {
+    sheetName = defaultWalletSheetName;
+  }
+
+  var app = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = app.getSheetByName(sheetName);
+  if (!sheet)
+  {
+    throw new error("Could not find sheet '" + sheetName + "'");
+  }
+
+  // Define positions
+  const columnInsertBefore = 8;
+  const columnsNeeded = 3;
+  const newColumnStart = columnInsertBefore+1;
+  const previousDataColumnStart = 9 + columnsNeeded;
+  const newDateColumnIndex = newColumnStart+1;
+  const newDateRowIndex = 4;
+
+  // Add new columns needed for new data
+  sheet.insertColumns(columnInsertBefore, columnsNeeded);
+
+  // We make sure we take the same width as previous
+  for(var x=newColumnStart; x < (newColumnStart+columnsNeeded); x++)
+  {
+    var newWidth = sheet.getColumnWidth(x+columnsNeeded);
+    sheet.setColumnWidth(x, newWidth);
+  }  
+
+  // Get the last data from the sheet, take new position into account.
+  var previousData = sheet.getRange(1, previousDataColumnStart, 1000, columnsNeeded);
+
+  // Paste previous data to sheet
+  previousData.copyTo(sheet.getRange(1, newColumnStart)); //, newColumnEnd, 1, 1000));
+
+  // Change the date of the new columns
+  var today = new Date();
+  var day = String(today.getDate()).padStart(2, '0');
+  var month = String(today.getMonth() + 1).padStart(2, '0'); 
+  var year = today.getFullYear();
+  var newDateValue = `="${year}-${month}-${day}"`;
+  sheet.getRange(newDateRowIndex, newDateColumnIndex).setFormula(newDateValue);
 }
