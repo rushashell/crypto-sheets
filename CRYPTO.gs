@@ -16,7 +16,7 @@ function onOpen()
   var ui = SpreadsheetApp.getUi();
 
   var app = SpreadsheetApp.getActiveSpreadsheet();
-  var walletValueSheet = app.getSheetByName(sheetName);
+  var walletValueSheet = app.getSheetByName(defaultWalletSheetName);
 
   var newMenu = ui.createMenu('CRYPTO')
       .addItem('💲 Refresh prices', 'cryptoRefresh')
